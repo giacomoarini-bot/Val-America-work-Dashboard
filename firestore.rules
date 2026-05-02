@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// ============================================================
+// REGOLE DI SICUREZZA FIRESTORE
+// Accesso pubblico (chiunque ha il link può leggere/scrivere)
+// come da scelta dell'utente.
+//
+// ATTENZIONE: chiunque conosca il dominio del progetto Firebase
+// può leggere e modificare i dati. Se in futuro vuoi limitare,
+// abilita Firebase Authentication e cambia "if true" con
+// "if request.auth != null".
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Configurazione app (employees, tasks, pin)
+    match /app/config {
+      allow read, write: if true;
+    }
+
+    // Stato giornaliero (un documento per giorno)
+    match /days/{date} {
+      allow read, write: if true;
+    }
+
+  }
+}
