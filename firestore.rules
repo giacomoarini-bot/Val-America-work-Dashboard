@@ -24,5 +24,15 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Note / comunicazioni staff
+    match /notes/{note} {
+      allow read, write: if true;
+    }
+
+    // Prodotti finiti / da ordinare
+    match /products/{product} {
+      allow read, write: if true;
+    }
+
   }
 }
