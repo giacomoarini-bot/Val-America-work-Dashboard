@@ -2046,7 +2046,7 @@
             {/* Intestazione della tabella: sticky insieme all'header */}
             {tab === 'current' && products.length > 0 && (
               <div className="max-w-2xl mx-auto px-5">
-                <div className="grid grid-cols-[1fr_58px_62px_28px] gap-1 border-t border-stone-200/70 py-2">
+                <div className="grid grid-cols-[1fr_74px_54px_28px] gap-1 border-t border-stone-200/70 py-2">
                   <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold pl-2">Prodotto</div>
                   <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Q.tà</div>
                   <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Un.</div>
@@ -2157,7 +2157,7 @@
       const cellBase = 'w-full bg-transparent outline-none py-3 rounded-lg focus:bg-stone-50';
 
       return (
-        <div className="grid grid-cols-[1fr_58px_62px_28px] gap-1 items-center border-b border-stone-100 last:border-b-0 px-5">
+        <div className="grid grid-cols-[1fr_74px_54px_28px] gap-1 items-center border-b border-stone-100 last:border-b-0 px-5">
           <input
             ref={nameRef}
             value={name}
@@ -2176,6 +2176,7 @@
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }}
             inputMode="decimal"
             placeholder="—"
+            title={qty}
             className={`${cellBase} px-1 t-15 text-center text-stone-700 placeholder:text-stone-300`}
           />
           <select
@@ -2221,13 +2222,13 @@
 
           {open && (
             <div className="border-t border-stone-100">
-              <div className="grid grid-cols-[1fr_58px_62px] gap-1 px-4 pt-3 pb-1">
+              <div className="grid grid-cols-[1fr_74px_54px] gap-1 px-4 pt-3 pb-1">
                 <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold">Prodotto</div>
                 <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Q.tà</div>
                 <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Un.</div>
               </div>
               {items.map((i, k) => (
-                <div key={k} className="grid grid-cols-[1fr_58px_62px] gap-1 px-4 py-2 border-t border-stone-50">
+                <div key={k} className="grid grid-cols-[1fr_74px_54px] gap-1 px-4 py-2 border-t border-stone-50">
                   <div className="t-13 text-stone-900 break-words">{i.name}</div>
                   <div className="t-13 text-stone-600 text-center">{i.qty || '—'}</div>
                   <div className="t-13 text-stone-500 text-center">{i.unit || ''}</div>
