@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ciao Bella" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Ciao Bella Dashboard</title>
-  <meta name="app-version" content="v9-jsx-classic-fix" />
+  <meta name="app-version" content="v10-ordini-tabella" />
 
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.webmanifest" />
@@ -312,7 +312,8 @@
         send: "M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z",
         archive: "M21 8v13H3V8M1 3h22v5H1zM10 12h4",
         package: "m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5M12 22V12",
-        cart: "M8 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM19 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"
+        cart: "M8 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM19 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12",
+        copy: "M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
       };
       return (
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -338,7 +339,8 @@
       const [notes, setNotes] = useState([]);
       const [notesTab, setNotesTab] = useState('active');
       const [products, setProducts] = useState([]);
-      const [productsTab, setProductsTab] = useState('pending');
+      const [orders, setOrders] = useState([]);
+      const [ordersTab, setOrdersTab] = useState('current');
       const [toast, setToast] = useState(null);
       const [connectionError, setConnectionError] = useState(null);
 
@@ -406,17 +408,26 @@
               setNotes(arr);
             });
 
-            // Live subscribe to products collection (prodotti finiti / da ordinare)
+            // Live subscribe to products collection = righe dell'ordine in corso
             window.fb.onSnapshotCollection('products', (snap) => {
               const arr = [];
               snap.forEach(doc => arr.push({ id: doc.id, ...doc.data() }));
-              // Sort: not-ordered before ordered, then urgent first, then newest first
-              arr.sort((a, b) => {
-                if (a.ordered !== b.ordered) return a.ordered ? 1 : -1;
-                if (a.urgent !== b.urgent) return a.urgent ? -1 : 1;
-                return (b.createdAt || '').localeCompare(a.createdAt || '');
-              });
+              // Ordine di inserimento (come una tabella): dal più vecchio al più nuovo
+              arr.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
               setProducts(arr);
+            });
+
+            // Live subscribe to orders collection = archivio ordini chiusi
+            window.fb.onSnapshotCollection('orders', (snap) => {
+              const arr = [];
+              snap.forEach(doc => arr.push({ id: doc.id, ...doc.data() }));
+              // Più recenti in cima (per data ordine, poi per momento di chiusura)
+              arr.sort((a, b) => {
+                const d = (b.date || '').localeCompare(a.date || '');
+                if (d !== 0) return d;
+                return (b.closedAt || '').localeCompare(a.closedAt || '');
+              });
+              setOrders(arr);
             });
 
             // Restore logged-in employee
@@ -637,52 +648,73 @@
         showToast('Nota eliminata');
       };
 
-      // ============== PRODUCTS HANDLERS ==============
-      const createProduct = async ({ name, qty, note, urgent }) => {
-        if (!currentUser) return;
+      // ============== ORDINI: RIGHE DELL'ORDINE IN CORSO ==============
+      // Ogni documento in `products` è una riga della tabella dell'ordine aperto.
+      // Schema riga: { name, qty, unit, createdBy, createdById, createdAt }
+
+      // Crea una riga vuota e restituisce il suo id (serve per metterci il cursore)
+      const addProductRow = async () => {
+        if (!currentUser) return null;
         const id = `prod_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         await window.fb.setDoc(`products/${id}`, {
-          name,
-          qty: qty || '',
-          note: note || '',
-          urgent: !!urgent,
-          ordered: false,
-          orderedAt: null,
-          orderedBy: null,
+          name: '',
+          qty: '',
+          unit: 'ct',
           createdBy: currentUser.name,
           createdById: currentUser.id,
           createdAt: new Date().toISOString()
         }, { merge: false });
-        showToast('Prodotto aggiunto');
+        return id;
       };
 
-      const markOrdered = async (productId) => {
-        if (!currentUser) return;
-        await window.fb.setDoc(`products/${productId}`, {
-          ordered: true,
-          orderedAt: new Date().toISOString(),
-          orderedBy: currentUser.name
-        }, { merge: true });
-        showToast('Segnato come ordinato');
-      };
-
-      const markUnordered = async (productId) => {
-        if (!currentUser) return;
-        await window.fb.setDoc(`products/${productId}`, {
-          ordered: false,
-          orderedAt: null,
-          orderedBy: null
-        }, { merge: true });
-        showToast('Riportato in lista');
+      // Aggiorna una singola cella (chiamato all'uscita dal campo)
+      const updateProductRow = async (productId, patch) => {
+        await window.fb.setDoc(`products/${productId}`, patch, { merge: true });
       };
 
       const deleteProduct = async (productId) => {
         await window.fb.deleteDoc(`products/${productId}`);
-        showToast('Prodotto eliminato');
       };
 
-      // Count products still to order (for the dashboard badge)
-      const pendingProductsCount = products.filter(p => !p.ordered).length;
+      // Chiude l'ordine: archivia tutte le righe compilate e svuota la tabella
+      const closeOrder = async ({ date, supplier }) => {
+        if (!currentUser) return false;
+        const items = products
+          .map(p => ({
+            name: (p.name || '').trim(),
+            qty: (p.qty || '').trim(),
+            unit: (p.unit || '').trim()
+          }))
+          .filter(i => i.name.length > 0);
+
+        if (items.length === 0) {
+          showToast('Nessun prodotto da archiviare');
+          return false;
+        }
+
+        const id = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        await window.fb.setDoc(`orders/${id}`, {
+          date: date || todayKey(),
+          supplier: (supplier || '').trim(),
+          items,
+          closedBy: currentUser.name,
+          closedById: currentUser.id,
+          closedAt: new Date().toISOString()
+        }, { merge: false });
+
+        // Svuota la tabella dell'ordine in corso
+        await Promise.all(products.map(p => window.fb.deleteDoc(`products/${p.id}`)));
+        showToast(`Ordine archiviato · ${items.length} prodotti`);
+        return true;
+      };
+
+      const deleteOrder = async (orderId) => {
+        await window.fb.deleteDoc(`orders/${orderId}`);
+        showToast('Ordine eliminato dall’archivio');
+      };
+
+      // Badge dashboard: righe compilate nell'ordine in corso
+      const pendingProductsCount = products.filter(p => (p.name || '').trim().length > 0).length;
 
       // Count unread notes for current user (only active, not authored by self optional)
       const unreadCount = currentUser
@@ -726,15 +758,18 @@
             />
           )}
           {screen === 'products' && currentUser && (
-            <ProductsScreen
+            <OrdersScreen
               user={currentUser}
               products={products}
-              tab={productsTab}
-              setTab={setProductsTab}
-              onMarkOrdered={markOrdered}
-              onMarkUnordered={markUnordered}
-              onDelete={deleteProduct}
-              onCreate={createProduct}
+              orders={orders}
+              tab={ordersTab}
+              setTab={setOrdersTab}
+              onAddRow={addProductRow}
+              onUpdateRow={updateProductRow}
+              onDeleteRow={deleteProduct}
+              onCloseOrder={closeOrder}
+              onDeleteOrder={deleteOrder}
+              onToast={showToast}
               onExit={() => setScreen('dashboard')}
             />
           )}
@@ -963,7 +998,7 @@
                     </span>
                   )}
                 </button>
-                <button onClick={onOpenProducts} className="relative w-9 h-9 rounded-full bg-white shadow-sm border border-stone-200/60 flex items-center justify-center hover:bg-stone-50 transition-colors" title="Prodotti da ordinare">
+                <button onClick={onOpenProducts} className="relative w-9 h-9 rounded-full bg-white shadow-sm border border-stone-200/60 flex items-center justify-center hover:bg-stone-50 transition-colors" title="Ordini">
                   <Icon name="cart" className="w-4 h-4 text-stone-600" />
                   {pendingProductsCount > 0 && (
                     <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
@@ -1904,203 +1939,363 @@
       );
     }
 
-    // ============== PRODUCTS SCREEN (prodotti finiti / da ordinare) ==============
-    function ProductsScreen({ user, products, tab, setTab, onMarkOrdered, onMarkUnordered, onDelete, onCreate, onExit }) {
-      const [showForm, setShowForm] = useState(false);
-      const pending = products.filter(p => !p.ordered);
-      const ordered = products.filter(p => p.ordered);
-      const listed = tab === 'pending' ? pending : ordered;
+    // ============== ORDINI (tabella + archivio) ==============
+    // L'ordine in corso vive nella collection `products`: un documento = una riga.
+    // Alla chiusura le righe vengono impacchettate in un documento `orders` e cancellate.
+    const ORDER_UNITS = ['ct', 'pz', 'bt', 'kg', 'lt'];
+
+    function formatDateShort(key) {
+      if (!key) return '';
+      const parts = key.split('-');
+      if (parts.length !== 3) return key;
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+
+    // Testo pronto da incollare in WhatsApp al fornitore
+    function buildOrderText(order) {
+      const lines = [];
+      lines.push(`Ordine ${formatDateShort(order.date)}${order.supplier ? ' — ' + order.supplier : ''}`);
+      lines.push('');
+      (order.items || []).forEach(i => {
+        const qty = (i.qty || '').trim();
+        const unit = (i.unit || '').trim();
+        // L'unità ha senso solo se c'è una quantità
+        const q = qty ? (unit ? `${qty} ${unit}` : qty) : '';
+        lines.push(q ? `• ${i.name} — ${q}` : `• ${i.name}`);
+      });
+      return lines.join('\n');
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* fallback sotto */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function OrdersScreen({ user, products, orders, tab, setTab, onAddRow, onUpdateRow, onDeleteRow, onCloseOrder, onDeleteOrder, onToast, onExit }) {
+      const [showClose, setShowClose] = useState(false);
+      const [focusId, setFocusId] = useState(null);
+      const [adding, setAdding] = useState(false);
+
+      const filled = products.filter(p => (p.name || '').trim().length > 0);
+
+      const handleAdd = async () => {
+        if (adding) return;
+        setAdding(true);
+        try {
+          const id = await onAddRow();
+          if (id) setFocusId(id);
+        } finally {
+          setAdding(false);
+        }
+      };
 
       return (
-        <div className="min-h-screen pb-24">
-          <div className="bg-white border-b border-stone-200/60 sticky top-0 z-30 backdrop-blur-xl bg-white/80">
+        <div className="min-h-screen pb-28">
+          {/* ---------- HEADER (resta fisso in alto) ---------- */}
+          <div className="bg-white border-b border-stone-200/60 sticky top-0 z-30 backdrop-blur-xl bg-white/90">
             <div className="max-w-2xl mx-auto px-5 pt-12 pb-3 flex items-center justify-between">
               <button onClick={onExit} className="flex items-center gap-1 text-stone-700 hover:text-stone-900">
                 <Icon name="chevronleft" className="w-5 h-5" /> <span className="text-base">Indietro</span>
               </button>
               <div className="flex items-center gap-2">
                 <Icon name="cart" className="w-5 h-5 text-stone-700" />
-                <div className="text-base font-semibold tracking-tight">Prodotti</div>
+                <div className="text-base font-semibold tracking-tight">Ordini</div>
               </div>
               <div className="w-16" />
             </div>
+
             <div className="max-w-2xl mx-auto px-5 pb-3 flex gap-1.5">
-              <button onClick={() => setTab('pending')}
-                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Da ordinare
-                {pending.length > 0 && (
-                  <span className={`t-10 font-bold px-1.5 rounded ${tab === 'pending' ? 'bg-white/20' : 'bg-stone-300'}`}>{pending.length}</span>
+              <button onClick={() => setTab('current')}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${tab === 'current' ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Ordine in corso
+                {filled.length > 0 && (
+                  <span className={`t-10 font-bold px-1.5 rounded ${tab === 'current' ? 'bg-white/20' : 'bg-stone-300'}`}>{filled.length}</span>
                 )}
               </button>
-              <button onClick={() => setTab('ordered')}
-                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${tab === 'ordered' ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                <Icon name="check" className="w-3.5 h-3.5" /> Ordinati
-                {ordered.length > 0 && (
-                  <span className={`t-10 font-bold px-1.5 rounded ${tab === 'ordered' ? 'bg-white/20' : 'bg-stone-300'}`}>{ordered.length}</span>
+              <button onClick={() => setTab('archive')}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${tab === 'archive' ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                <Icon name="archive" className="w-3.5 h-3.5" /> Archivio
+                {orders.length > 0 && (
+                  <span className={`t-10 font-bold px-1.5 rounded ${tab === 'archive' ? 'bg-white/20' : 'bg-stone-300'}`}>{orders.length}</span>
                 )}
               </button>
             </div>
-          </div>
 
-          <div className="max-w-2xl mx-auto px-5 pt-5 space-y-3 animate-scale-in">
-            {listed.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-stone-200/60 shadow-sm p-10 text-center">
-                <Icon name={tab === 'pending' ? 'cart' : 'check'} className="w-10 h-10 text-stone-300 mx-auto mb-3" />
-                <div className="text-stone-500 text-sm">
-                  {tab === 'pending' ? 'Nessun prodotto da ordinare' : 'Nessun prodotto ordinato'}
+            {/* Intestazione della tabella: sticky insieme all'header */}
+            {tab === 'current' && products.length > 0 && (
+              <div className="max-w-2xl mx-auto px-5">
+                <div className="grid grid-cols-[1fr_58px_62px_28px] gap-1 border-t border-stone-200/70 py-2">
+                  <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold pl-2">Prodotto</div>
+                  <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Q.tà</div>
+                  <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Un.</div>
+                  <div />
                 </div>
-                {tab === 'pending' && (
-                  <div className="t-13 text-stone-400 mt-1">Tocca il pulsante in basso per aggiungerne uno</div>
-                )}
               </div>
-            ) : listed.map(product => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                currentUser={user}
-                onMarkOrdered={() => onMarkOrdered(product.id)}
-                onMarkUnordered={() => onMarkUnordered(product.id)}
-                onDelete={() => onDelete(product.id)}
-              />
-            ))}
+            )}
           </div>
 
-          {/* Floating action button to add a new product */}
-          {tab === 'pending' && (
-            <button onClick={() => setShowForm(true)}
-                    className="fixed bottom-6 right-6 z-30 w-14 h-14 rounded-full bg-stone-900 text-white shadow-2xl flex items-center justify-center hover:bg-stone-800 active:scale-95 transition-all">
-              <Icon name="plus" className="w-6 h-6" strokeWidth={2.5} />
-            </button>
+          {/* ---------- ORDINE IN CORSO ---------- */}
+          {tab === 'current' && (
+            <div className="max-w-2xl mx-auto px-5 pt-3 animate-scale-in">
+              <div className="bg-white rounded-2xl border border-stone-200/60 shadow-sm overflow-hidden">
+                {products.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <Icon name="cart" className="w-10 h-10 text-stone-300 mx-auto mb-3" />
+                    <div className="text-stone-500 text-sm">Nessun prodotto in lista</div>
+                    <div className="t-13 text-stone-400 mt-1">Tocca «Aggiungi riga» per iniziare</div>
+                  </div>
+                ) : products.map(p => (
+                  <OrderRow
+                    key={p.id}
+                    product={p}
+                    autoFocus={focusId === p.id}
+                    onFocused={() => setFocusId(null)}
+                    onUpdate={(patch) => onUpdateRow(p.id, patch)}
+                    onDelete={() => onDeleteRow(p.id)}
+                    onEnter={handleAdd}
+                  />
+                ))}
+
+                <button onClick={handleAdd} disabled={adding}
+                        className="w-full flex items-center justify-center gap-2 py-3.5 text-stone-600 hover:bg-stone-50 active:bg-stone-100 border-t border-stone-100 text-sm font-medium disabled:opacity-40">
+                  <Icon name="plus" className="w-4 h-4" strokeWidth={2.5} /> Aggiungi riga
+                </button>
+              </div>
+
+              <button onClick={() => setShowClose(true)} disabled={filled.length === 0}
+                      className="w-full mt-4 py-3.5 rounded-2xl bg-stone-900 text-white font-medium hover:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                <Icon name="archive" className="w-4 h-4" /> Chiudi ordine
+              </button>
+              <div className="t-11 text-stone-400 text-center mt-2">
+                Archivia l’ordine e svuota la tabella
+              </div>
+            </div>
           )}
 
-          {showForm && (
-            <ProductFormModal
-              onSave={async (data) => { await onCreate(data); setShowForm(false); }}
-              onClose={() => setShowForm(false)}
+          {/* ---------- ARCHIVIO ---------- */}
+          {tab === 'archive' && (
+            <div className="max-w-2xl mx-auto px-5 pt-5 space-y-3 animate-scale-in">
+              {orders.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-stone-200/60 shadow-sm p-10 text-center">
+                  <Icon name="archive" className="w-10 h-10 text-stone-300 mx-auto mb-3" />
+                  <div className="text-stone-500 text-sm">Nessun ordine archiviato</div>
+                  <div className="t-13 text-stone-400 mt-1">Gli ordini chiusi compaiono qui</div>
+                </div>
+              ) : orders.map(o => (
+                <ArchivedOrderCard key={o.id} order={o} onDelete={() => onDeleteOrder(o.id)} onToast={onToast} />
+              ))}
+            </div>
+          )}
+
+          {showClose && (
+            <CloseOrderModal
+              count={filled.length}
+              onConfirm={async (data) => {
+                const ok = await onCloseOrder(data);
+                if (ok) { setShowClose(false); setTab('archive'); }
+              }}
+              onClose={() => setShowClose(false)}
             />
           )}
         </div>
       );
     }
 
-    function ProductCard({ product, currentUser, onMarkOrdered, onMarkUnordered, onDelete }) {
-      const isAuthor = product.createdById === currentUser.id;
-      return (
-        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${product.urgent && !product.ordered ? 'border-red-300 ring-1 ring-red-200' : 'border-stone-200/60'} ${product.ordered ? 'opacity-70' : ''}`}>
-          <div className="p-4">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-                   style={{ backgroundColor: product.ordered ? 'rgba(52,199,89,0.12)' : (product.urgent ? 'rgba(255,59,48,0.10)' : '#f5f5f4') }}>
-                <Icon name={product.ordered ? 'check' : 'package'} className="w-4 h-4" strokeWidth={2.5}
-                      style={{ color: product.ordered ? '#34C759' : (product.urgent ? '#FF3B30' : '#78716c') }} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className={`t-15 font-semibold ${product.ordered ? 'text-stone-400 line-through' : 'text-stone-900'}`}>{product.name}</div>
-                  {product.qty && (
-                    <span className="t-11 font-medium px-2 py-0.5 rounded-md bg-stone-100 text-stone-600">{product.qty}</span>
-                  )}
-                  {product.urgent && !product.ordered && (
-                    <span className="t-10 uppercase tracking-wider font-semibold px-2 py-0.5 rounded-md bg-red-50 text-red-700">Urgente</span>
-                  )}
-                </div>
-                {product.note && <div className="t-13 text-stone-500 mt-0.5 whitespace-pre-wrap break-words">{product.note}</div>}
-                <div className="flex items-center gap-1.5 mt-2 t-11 text-stone-400 flex-wrap">
-                  <span>Aggiunto da <span className="font-medium text-stone-500">{product.createdBy}</span></span>
-                  <span>·</span>
-                  <span>{formatRelativeDate(product.createdAt)}</span>
-                </div>
-                {product.ordered && product.orderedBy && (
-                  <div className="t-11 text-green-600 mt-1 flex items-center gap-1">
-                    <Icon name="check" className="w-3 h-3" strokeWidth={3} />
-                    Ordinato da {product.orderedBy} · {formatRelativeDate(product.orderedAt)}
-                  </div>
-                )}
-              </div>
-            </div>
+    // Una riga della tabella. Le celle si scrivono direttamente e salvano all'uscita
+    // dal campo. La sincronizzazione live non sovrascrive la cella che stai scrivendo.
+    function OrderRow({ product, autoFocus, onFocused, onUpdate, onDelete, onEnter }) {
+      const [name, setName] = useState(product.name || '');
+      const [qty, setQty] = useState(product.qty || '');
+      const focusedRef = useRef(null);
+      const nameRef = useRef(null);
 
-            {/* Action buttons */}
-            <div className="flex gap-2 mt-3">
-              {!product.ordered ? (
-                <button onClick={onMarkOrdered}
-                        className="flex-1 py-2 bg-stone-900 text-white rounded-xl text-sm font-medium hover:bg-stone-800 flex items-center justify-center gap-1.5">
-                  <Icon name="check" className="w-4 h-4" strokeWidth={2.5} /> Segna ordinato
-                </button>
-              ) : (
-                <button onClick={onMarkUnordered}
-                        className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-xl text-sm font-medium hover:bg-stone-200">
-                  Riporta in lista
-                </button>
-              )}
-              {isAuthor && (
-                <button onClick={() => { if (confirm('Eliminare questo prodotto definitivamente?')) onDelete(); }}
-                        className="px-3 py-2 rounded-xl text-red-500 hover:bg-red-50">
-                  <Icon name="trash" className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
+      useEffect(() => {
+        if (focusedRef.current !== 'name') setName(product.name || '');
+      }, [product.name]);
+
+      useEffect(() => {
+        if (focusedRef.current !== 'qty') setQty(product.qty || '');
+      }, [product.qty]);
+
+      useEffect(() => {
+        if (autoFocus && nameRef.current) {
+          nameRef.current.focus();
+          onFocused();
+        }
+      }, [autoFocus]);
+
+      const commit = (field, value) => {
+        focusedRef.current = null;
+        if ((product[field] || '') === value) return;
+        const patch = {};
+        patch[field] = value;
+        onUpdate(patch);
+      };
+
+      const cellBase = 'w-full bg-transparent outline-none py-3 rounded-lg focus:bg-stone-50';
+
+      return (
+        <div className="grid grid-cols-[1fr_58px_62px_28px] gap-1 items-center border-b border-stone-100 last:border-b-0 px-5">
+          <input
+            ref={nameRef}
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onFocus={() => { focusedRef.current = 'name'; }}
+            onBlur={() => commit('name', name.trim())}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); onEnter(); } }}
+            placeholder="Nome prodotto"
+            className={`${cellBase} px-2 t-15 font-medium text-stone-900 placeholder:text-stone-300 placeholder:font-normal`}
+          />
+          <input
+            value={qty}
+            onChange={e => setQty(e.target.value)}
+            onFocus={() => { focusedRef.current = 'qty'; }}
+            onBlur={() => commit('qty', qty.trim())}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }}
+            inputMode="decimal"
+            placeholder="—"
+            className={`${cellBase} px-1 t-15 text-center text-stone-700 placeholder:text-stone-300`}
+          />
+          <select
+            value={product.unit || 'ct'}
+            onChange={e => onUpdate({ unit: e.target.value })}
+            className={`${cellBase} px-1 t-13 text-center text-stone-600 appearance-none cursor-pointer`}
+          >
+            {ORDER_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <button onClick={onDelete} title="Elimina riga"
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-stone-300 hover:text-red-500 hover:bg-red-50 justify-self-end">
+            <Icon name="x" className="w-3.5 h-3.5" strokeWidth={2.5} />
+          </button>
         </div>
       );
     }
 
-    function ProductFormModal({ onSave, onClose }) {
-      const [name, setName] = useState('');
-      const [qty, setQty] = useState('');
-      const [note, setNote] = useState('');
-      const [urgent, setUrgent] = useState(false);
+    function ArchivedOrderCard({ order, onDelete, onToast }) {
+      const [open, setOpen] = useState(false);
+      const items = order.items || [];
+
+      const handleCopy = async () => {
+        const ok = await copyToClipboard(buildOrderText(order));
+        onToast(ok ? 'Lista copiata negli appunti' : 'Copia non riuscita');
+      };
+
+      return (
+        <div className="bg-white rounded-2xl border border-stone-200/60 shadow-sm overflow-hidden">
+          <button onClick={() => setOpen(!open)} className="w-full p-4 flex items-center gap-3 text-left hover:bg-stone-50">
+            <div className="w-9 h-9 rounded-xl bg-stone-100 flex items-center justify-center flex-shrink-0">
+              <Icon name="archive" className="w-4 h-4 text-stone-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="t-15 font-semibold text-stone-900">{formatDateShort(order.date)}</div>
+              <div className="t-11 text-stone-400 mt-0.5 truncate">
+                {items.length} {items.length === 1 ? 'prodotto' : 'prodotti'}
+                {order.supplier ? ` · ${order.supplier}` : ''}
+                {order.closedBy ? ` · ${order.closedBy}` : ''}
+              </div>
+            </div>
+            <Icon name="chevronright" className={`w-4 h-4 text-stone-300 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+          </button>
+
+          {open && (
+            <div className="border-t border-stone-100">
+              <div className="grid grid-cols-[1fr_58px_62px] gap-1 px-4 pt-3 pb-1">
+                <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold">Prodotto</div>
+                <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Q.tà</div>
+                <div className="t-10 uppercase tracking-widest text-stone-400 font-semibold text-center">Un.</div>
+              </div>
+              {items.map((i, k) => (
+                <div key={k} className="grid grid-cols-[1fr_58px_62px] gap-1 px-4 py-2 border-t border-stone-50">
+                  <div className="t-13 text-stone-900 break-words">{i.name}</div>
+                  <div className="t-13 text-stone-600 text-center">{i.qty || '—'}</div>
+                  <div className="t-13 text-stone-500 text-center">{i.unit || ''}</div>
+                </div>
+              ))}
+              <div className="flex gap-2 p-4 pt-3">
+                <button onClick={handleCopy}
+                        className="flex-1 py-2.5 bg-stone-900 text-white rounded-xl text-sm font-medium hover:bg-stone-800 flex items-center justify-center gap-1.5">
+                  <Icon name="copy" className="w-4 h-4" /> Copia lista
+                </button>
+                <button onClick={() => { if (confirm("Eliminare questo ordine dall'archivio?")) onDelete(); }}
+                        className="px-3 py-2.5 rounded-xl text-red-500 hover:bg-red-50">
+                  <Icon name="trash" className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function CloseOrderModal({ count, onConfirm, onClose }) {
+      const [date, setDate] = useState(todayKey());
+      const [supplier, setSupplier] = useState('');
       const [saving, setSaving] = useState(false);
-      const canSave = name.trim().length > 0 && !saving;
 
       const handleSubmit = async () => {
-        if (!canSave) return;
+        if (saving) return;
         setSaving(true);
-        await onSave({ name: name.trim(), qty: qty.trim(), note: note.trim(), urgent });
-        setSaving(false);
+        try {
+          await onConfirm({ date, supplier });
+        } finally {
+          setSaving(false);
+        }
       };
 
       return (
         <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-0 sm:p-6 animate-fade-in">
           <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 animate-scale-in max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
-              <div className="text-lg font-semibold tracking-tight">Nuovo prodotto</div>
+              <div className="text-lg font-semibold tracking-tight">Chiudi ordine</div>
               <button onClick={onClose} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 hover:bg-stone-200"><Icon name="x" className="w-4 h-4" /></button>
             </div>
             <div className="space-y-4">
-              <Field label="Prodotto">
-                <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Es. Caffè in grani"
+              <Field label="Data ordine">
+                <input type="date" value={date} onChange={e => setDate(e.target.value)}
                        className="w-full px-4 py-3 bg-stone-100 rounded-xl t-15 outline-none focus:bg-stone-50 focus:ring-2 focus:ring-stone-900" />
               </Field>
-              <Field label="Quantità (opzionale)">
-                <input value={qty} onChange={e => setQty(e.target.value)} placeholder="Es. 2 casse, 5 kg…"
+              <Field label="Fornitore (facoltativo)">
+                <input value={supplier} onChange={e => setSupplier(e.target.value)} placeholder="Es. Metro, Partesa…"
                        className="w-full px-4 py-3 bg-stone-100 rounded-xl t-15 outline-none focus:bg-stone-50 focus:ring-2 focus:ring-stone-900" />
               </Field>
-              <Field label="Note (opzionale)">
-                <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="Marca, fornitore, dettagli…"
-                          className="w-full px-4 py-3 bg-stone-100 rounded-xl t-15 outline-none focus:bg-stone-50 focus:ring-2 focus:ring-stone-900 resize-none" />
-              </Field>
-              <button onClick={() => setUrgent(!urgent)}
-                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-colors ${urgent ? 'bg-red-50 border border-red-200' : 'bg-stone-100 border border-transparent'}`}>
-                <div className="flex items-center gap-2">
-                  <Icon name="alert" className={`w-4 h-4 ${urgent ? 'text-red-600' : 'text-stone-500'}`} />
-                  <span className={`text-sm font-medium ${urgent ? 'text-red-900' : 'text-stone-700'}`}>Segna come urgente</span>
-                </div>
-                <div className={`w-10 h-6 rounded-full p-0.5 transition-colors ${urgent ? 'bg-red-500' : 'bg-stone-300'}`}>
-                  <div className={`w-5 h-5 rounded-full bg-white transition-transform ${urgent ? 'translate-x-4' : ''}`} />
-                </div>
-              </button>
+              <div className="t-13 text-stone-500 bg-stone-50 rounded-xl px-4 py-3">
+                {count} {count === 1 ? 'prodotto verrà archiviato' : 'prodotti verranno archiviati'}. La tabella dell’ordine in corso verrà svuotata.
+              </div>
             </div>
             <div className="flex gap-2 mt-6">
               <button onClick={onClose} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-xl font-medium hover:bg-stone-200">Annulla</button>
-              <button onClick={handleSubmit} disabled={!canSave}
+              <button onClick={handleSubmit} disabled={saving}
                       className="flex-1 py-3 bg-stone-900 text-white rounded-xl font-medium disabled:opacity-30 disabled:cursor-not-allowed hover:bg-stone-800 flex items-center justify-center gap-2">
-                <Icon name="plus" className="w-4 h-4" /> {saving ? 'Salvataggio…' : 'Aggiungi'}
+                <Icon name="archive" className="w-4 h-4" /> {saving ? 'Archiviazione…' : 'Archivia'}
               </button>
             </div>
           </div>
         </div>
       );
     }
+
 
     // Helper: relative date formatter (uses existing formatTime / formatDateLong)
     function formatRelativeDate(iso) {

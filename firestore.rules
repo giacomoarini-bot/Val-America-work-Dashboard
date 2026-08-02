@@ -29,8 +29,13 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Prodotti finiti / da ordinare
+    // Righe dell'ordine in corso (una riga = un documento)
     match /products/{product} {
+      allow read, write: if true;
+    }
+
+    // Archivio degli ordini chiusi
+    match /orders/{order} {
       allow read, write: if true;
     }
 
