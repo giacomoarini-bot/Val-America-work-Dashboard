@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ciao Bella" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Ciao Bella Dashboard</title>
-  <meta name="app-version" content="v10-ordini-tabella" />
+  <meta name="app-version" content="v11-calendario-turni" />
 
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.webmanifest" />
@@ -313,7 +313,9 @@
         archive: "M21 8v13H3V8M1 3h22v5H1zM10 12h4",
         package: "m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5M12 22V12",
         cart: "M8 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM19 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12",
-        copy: "M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+        copy: "M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+        calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z",
+        userx: "M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M8.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM17 8l5 5M22 8l-5 5"
       };
       return (
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -341,6 +343,9 @@
       const [products, setProducts] = useState([]);
       const [orders, setOrders] = useState([]);
       const [ordersTab, setOrdersTab] = useState('current');
+      const [schedule, setSchedule] = useState({});
+      const [scheduleView, setScheduleView] = useState('week');
+      const [isAdmin, setIsAdmin] = useState(!!localGet('hotel:is_admin'));
       const [toast, setToast] = useState(null);
       const [connectionError, setConnectionError] = useState(null);
 
@@ -417,6 +422,13 @@
               setProducts(arr);
             });
 
+            // Live subscribe to schedule collection = calendario turni (un doc per giorno)
+            window.fb.onSnapshotCollection('schedule', (snap) => {
+              const map = {};
+              snap.forEach(doc => { map[doc.id] = doc.data() || {}; });
+              setSchedule(map);
+            });
+
             // Live subscribe to orders collection = archivio ordini chiusi
             window.fb.onSnapshotCollection('orders', (snap) => {
               const arr = [];
@@ -461,7 +473,9 @@
       const handleLogout = () => {
         setScreen('login');
         setCurrentUser(null);
+        setIsAdmin(false);
         localDel('hotel:current_user');
+        localDel('hotel:is_admin');
       };
 
       // Toggle a single task — uses Firestore field-level update.
@@ -538,6 +552,8 @@
         if (pinInput === adminPin) {
           setPinInput('');
           setPinError(false);
+          setIsAdmin(true);
+          localSet('hotel:is_admin', true);
           setScreen('admin');
         } else {
           setPinError(true);
@@ -713,6 +729,105 @@
         showToast('Ordine eliminato dall’archivio');
       };
 
+      // ============== CALENDARIO TURNI ==============
+      // Un documento per giorno: schedule/YYYY-MM-DD
+      //   { guests, guestsBy, guestsAt,
+      //     shifts:   { [empId]: { period, time } },
+      //     requests: { [empId]: { status, note, createdAt, decidedBy, decidedAt, seen } } }
+
+      // Ospiti del giorno — solo admin
+      const setDayGuests = async (dayKey, text) => {
+        if (!isAdmin) return;
+        await window.fb.setDoc(`schedule/${dayKey}`, {
+          guests: text,
+          guestsBy: currentUser ? currentUser.name : '',
+          guestsAt: new Date().toISOString()
+        }, { merge: true });
+      };
+
+      // Turno di un dipendente in un giorno — solo admin
+      const setEmployeeShift = async (dayKey, empId, shift) => {
+        if (!isAdmin) return;
+        const value = shift ? { period: shift.period || '', time: (shift.time || '').trim() } : window.fb.deleteField();
+        const patch = { shifts: {} };
+        patch.shifts[empId] = value;
+        await window.fb.setDoc(`schedule/${dayKey}`, patch, { merge: true });
+      };
+
+      // Il dipendente segnala che non e' disponibile
+      const requestUnavailable = async (dayKey, note) => {
+        if (!currentUser) return;
+        const patch = { requests: {} };
+        patch.requests[currentUser.id] = {
+          status: 'pending',
+          note: (note || '').trim(),
+          name: currentUser.name,
+          createdAt: new Date().toISOString(),
+          decidedBy: '',
+          decidedAt: '',
+          seen: true
+        };
+        await window.fb.setDoc(`schedule/${dayKey}`, patch, { merge: true });
+        showToast('Richiesta inviata');
+      };
+
+      // Il dipendente ritira la propria richiesta
+      const cancelRequest = async (dayKey) => {
+        if (!currentUser) return;
+        const patch = { requests: {} };
+        patch.requests[currentUser.id] = window.fb.deleteField();
+        await window.fb.setDoc(`schedule/${dayKey}`, patch, { merge: true });
+        showToast('Richiesta ritirata');
+      };
+
+      // L'admin approva o rifiuta
+      const decideRequest = async (dayKey, empId, status) => {
+        if (!isAdmin || !currentUser) return;
+        const day = schedule[dayKey] || {};
+        const req = (day.requests || {})[empId] || {};
+        const patch = { requests: {} };
+        patch.requests[empId] = {
+          ...req,
+          status,
+          decidedBy: currentUser.name,
+          decidedAt: new Date().toISOString(),
+          // il rifiuto va notificato al dipendente
+          seen: status === 'rejected' ? false : true
+        };
+        await window.fb.setDoc(`schedule/${dayKey}`, patch, { merge: true });
+        showToast(status === 'approved' ? 'Richiesta approvata' : 'Richiesta rifiutata');
+      };
+
+      // Il dipendente ha letto l'esito negativo
+      const markRejectionsSeen = async () => {
+        if (!currentUser) return;
+        const days = Object.keys(schedule).filter(k => {
+          const r = (schedule[k].requests || {})[currentUser.id];
+          return r && r.status === 'rejected' && r.seen === false;
+        });
+        await Promise.all(days.map(k => {
+          const req = schedule[k].requests[currentUser.id];
+          const patch = { requests: {} };
+          patch.requests[currentUser.id] = { ...req, seen: true };
+          return window.fb.setDoc(`schedule/${k}`, patch, { merge: true });
+        }));
+      };
+
+      // Badge: richieste da approvare (admin) / rifiuti non ancora letti (dipendente)
+      const pendingRequestsCount = Object.keys(schedule).reduce((n, k) => {
+        const reqs = schedule[k].requests || {};
+        return n + Object.keys(reqs).filter(id => reqs[id] && reqs[id].status === 'pending').length;
+      }, 0);
+
+      const myRejectedCount = currentUser
+        ? Object.keys(schedule).filter(k => {
+            const r = (schedule[k].requests || {})[currentUser.id];
+            return r && r.status === 'rejected' && r.seen === false;
+          }).length
+        : 0;
+
+      const scheduleBadge = isAdmin ? pendingRequestsCount : myRejectedCount;
+
       // Badge dashboard: righe compilate nell'ordine in corso
       const pendingProductsCount = products.filter(p => (p.name || '').trim().length > 0).length;
 
@@ -755,6 +870,27 @@
               onOpenNotes={() => setScreen('notes')}
               onOpenProducts={() => setScreen('products')}
               pendingProductsCount={pendingProductsCount}
+              onOpenSchedule={() => setScreen('schedule')}
+              scheduleBadge={scheduleBadge}
+              isAdmin={isAdmin}
+            />
+          )}
+          {screen === 'schedule' && currentUser && (
+            <ScheduleScreen
+              user={currentUser}
+              employees={employees}
+              schedule={schedule}
+              isAdmin={isAdmin}
+              view={scheduleView}
+              setView={setScheduleView}
+              onSetGuests={setDayGuests}
+              onSetShift={setEmployeeShift}
+              onRequest={requestUnavailable}
+              onCancelRequest={cancelRequest}
+              onDecide={decideRequest}
+              onSeenRejections={markRejectionsSeen}
+              myRejectedCount={myRejectedCount}
+              onExit={() => setScreen('dashboard')}
             />
           )}
           {screen === 'products' && currentUser && (
@@ -958,7 +1094,7 @@
     }
 
     // ============== DASHBOARD ==============
-    function Dashboard({ user, tasks, dayState, activePeriod, setActivePeriod, onToggle, onLogout, onAdmin, unreadCount, onOpenNotes, onOpenProducts, pendingProductsCount }) {
+    function Dashboard({ user, tasks, dayState, activePeriod, setActivePeriod, onToggle, onLogout, onAdmin, unreadCount, onOpenNotes, onOpenProducts, pendingProductsCount, onOpenSchedule, scheduleBadge, isAdmin }) {
       const periodTasks = tasks.filter(t => taskInPeriod(t, activePeriod));
       // Each task can occupy multiple areas. Build a flat list of (task, area) "slots"
       // that are due in the active period. For synced tasks we still get one row per area
@@ -1003,6 +1139,14 @@
                   {pendingProductsCount > 0 && (
                     <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
                       {pendingProductsCount > 9 ? '9+' : pendingProductsCount}
+                    </span>
+                  )}
+                </button>
+                <button onClick={onOpenSchedule} className="relative w-9 h-9 rounded-full bg-white shadow-sm border border-stone-200/60 flex items-center justify-center hover:bg-stone-50 transition-colors" title="Calendario">
+                  <Icon name="calendar" className="w-4 h-4 text-stone-600" />
+                  {scheduleBadge > 0 && (
+                    <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white ${isAdmin ? 'bg-blue-500' : 'bg-amber-500'}`}>
+                      {scheduleBadge > 9 ? '9+' : scheduleBadge}
                     </span>
                   )}
                 </button>
@@ -2293,6 +2437,529 @@
               </button>
             </div>
           </div>
+        </div>
+      );
+    }
+
+
+    // ============== CALENDARIO TURNI ==============
+    const SHIFT_TYPES = [
+      { id: 'mattina',    short: 'M', label: 'Mattina',    color: '#FF9500' },
+      { id: 'pomeriggio', short: 'P', label: 'Pomeriggio', color: '#AF52DE' },
+      { id: 'sera',       short: 'S', label: 'Sera',       color: '#0A84FF' },
+      { id: 'riposo',     short: 'R', label: 'Riposo',     color: '#8E8E93' }
+    ];
+    const SHIFT_BY_ID = {};
+    SHIFT_TYPES.forEach(s => { SHIFT_BY_ID[s.id] = s; });
+
+    const DOW_SHORT = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
+
+    const dayKeyOf = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const addDays = (d, n) => {
+      const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      x.setDate(x.getDate() + n);
+      return x;
+    };
+
+    // Lunedi come primo giorno della settimana
+    const startOfWeek = (d) => {
+      const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      return addDays(x, -((x.getDay() + 6) % 7));
+    };
+
+    const shiftOf = (day, empId) => ((day && day.shifts) || {})[empId] || null;
+    const requestOf = (day, empId) => ((day && day.requests) || {})[empId] || null;
+
+    // Colori dello stato di disponibilita': rosso = in attesa, verde = approvato
+    const statusStyle = (status) => {
+      if (status === 'pending')  return { bg: 'rgba(255,59,48,0.12)',  ring: 'rgba(255,59,48,0.35)',  fg: '#C0392B' };
+      if (status === 'approved') return { bg: 'rgba(52,199,89,0.14)',  ring: 'rgba(52,199,89,0.40)',  fg: '#1E7B34' };
+      return null;
+    };
+
+    function ScheduleScreen({ user, employees, schedule, isAdmin, view, setView, onSetGuests, onSetShift,
+                              onRequest, onCancelRequest, onDecide, onSeenRejections, myRejectedCount, onExit }) {
+      const [anchor, setAnchor] = useState(() => new Date());
+      const [openDay, setOpenDay] = useState(null);
+
+      // Aprendo il calendario, gli esiti negativi risultano letti (il banner resta 7 giorni)
+      useEffect(() => {
+        if (myRejectedCount > 0) onSeenRejections();
+      }, []);
+
+      const today = todayKey();
+
+      const weekStart = startOfWeek(anchor);
+      const weekDays = [];
+      for (let i = 0; i < 7; i++) weekDays.push(addDays(weekStart, i));
+
+      // Griglia del mese: sempre 6 righe da lunedi a domenica
+      const monthFirst = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+      const gridStart = startOfWeek(monthFirst);
+      const monthDays = [];
+      for (let i = 0; i < 42; i++) monthDays.push(addDays(gridStart, i));
+
+      const step = (n) => setAnchor(view === 'week' ? addDays(anchor, 7 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
+
+      const periodLabel = view === 'week'
+        ? (() => {
+            const a = weekDays[0], b = weekDays[6];
+            const sameMonth = a.getMonth() === b.getMonth();
+            const fmt = (d, withMonth) => d.getDate() + (withMonth ? ' ' + d.toLocaleDateString('it-IT', { month: 'long' }) : '');
+            return `${fmt(a, !sameMonth)} – ${fmt(b, true)}`;
+          })()
+        : anchor.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+
+      // Banner: richieste rifiutate negli ultimi 7 giorni
+      const recentRejections = Object.keys(schedule).filter(k => {
+        const r = requestOf(schedule[k], user.id);
+        if (!r || r.status !== 'rejected' || !r.decidedAt) return false;
+        return (Date.now() - new Date(r.decidedAt).getTime()) < 7 * 86400000;
+      }).sort();
+
+      return (
+        <div className="min-h-screen pb-24">
+          {/* ---------- HEADER ---------- */}
+          <div className="bg-white border-b border-stone-200/60 sticky top-0 z-30 backdrop-blur-xl bg-white/90">
+            <div className="max-w-3xl mx-auto px-4 pt-12 pb-3 flex items-center justify-between">
+              <button onClick={onExit} className="flex items-center gap-1 text-stone-700 hover:text-stone-900">
+                <Icon name="chevronleft" className="w-5 h-5" /> <span className="text-base">Indietro</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <Icon name="calendar" className="w-5 h-5 text-stone-700" />
+                <div className="text-base font-semibold tracking-tight">Calendario</div>
+                {isAdmin && (
+                  <span className="t-10 uppercase tracking-wider font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700">Admin</span>
+                )}
+              </div>
+              <div className="w-16" />
+            </div>
+
+            <div className="max-w-3xl mx-auto px-4 pb-3 flex items-center gap-2">
+              <div className="flex bg-stone-100 rounded-full p-0.5">
+                <button onClick={() => setView('week')}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${view === 'week' ? 'bg-stone-900 text-white' : 'text-stone-600'}`}>
+                  Settimana
+                </button>
+                <button onClick={() => setView('month')}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${view === 'month' ? 'bg-stone-900 text-white' : 'text-stone-600'}`}>
+                  Mese
+                </button>
+              </div>
+              <div className="flex-1" />
+              <button onClick={() => setAnchor(new Date())}
+                      className="px-3 py-1.5 rounded-full text-sm font-medium bg-stone-100 text-stone-700 hover:bg-stone-200">
+                Oggi
+              </button>
+            </div>
+
+            <div className="max-w-3xl mx-auto px-4 pb-3 flex items-center justify-between">
+              <button onClick={() => step(-1)} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 hover:bg-stone-200">
+                <Icon name="chevronleft" className="w-4 h-4" />
+              </button>
+              <div className="t-15 font-semibold text-stone-900 capitalize">{periodLabel}</div>
+              <button onClick={() => step(1)} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 hover:bg-stone-200">
+                <Icon name="chevronright" className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="max-w-3xl mx-auto px-4 pt-4 animate-scale-in">
+            {/* Esiti negativi recenti */}
+            {recentRejections.length > 0 && (
+              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Icon name="alert" className="w-4 h-4 text-amber-600" />
+                  <div className="t-13 font-semibold text-amber-900">Richieste non accettate</div>
+                </div>
+                {recentRejections.map(k => {
+                  const r = requestOf(schedule[k], user.id);
+                  return (
+                    <div key={k} className="t-13 text-amber-800 mt-1">
+                      {formatDateLong(k)} — rifiutata{r.decidedBy ? ` da ${r.decidedBy}` : ''}. Sei atteso in servizio.
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Legenda */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3 t-11 text-stone-500">
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#FF3B30' }} /> In attesa</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#34C759' }} /> Assenza approvata</span>
+              {SHIFT_TYPES.map(s => (
+                <span key={s.id} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.color }} /> {s.label}</span>
+              ))}
+            </div>
+
+            {view === 'week' ? (
+              <WeekBoard
+                days={weekDays} today={today} employees={employees} schedule={schedule}
+                currentUserId={user.id} onOpenDay={setOpenDay}
+              />
+            ) : (
+              <MonthGrid
+                days={monthDays} month={anchor.getMonth()} today={today} schedule={schedule}
+                currentUserId={user.id} isAdmin={isAdmin} onOpenDay={setOpenDay}
+              />
+            )}
+          </div>
+
+          {openDay && (
+            <DaySheet
+              dayKey={openDay}
+              day={schedule[openDay] || {}}
+              employees={employees}
+              user={user}
+              isAdmin={isAdmin}
+              onSetGuests={onSetGuests}
+              onSetShift={onSetShift}
+              onRequest={onRequest}
+              onCancelRequest={onCancelRequest}
+              onDecide={onDecide}
+              onClose={() => setOpenDay(null)}
+            />
+          )}
+        </div>
+      );
+    }
+
+    // Tabellone settimanale: una riga per dipendente, una colonna per giorno
+    function WeekBoard({ days, today, employees, schedule, currentUserId, onOpenDay }) {
+      const cols = 'grid grid-cols-[68px_repeat(7,minmax(0,1fr))] gap-px';
+
+      return (
+        <div className="bg-stone-200/70 rounded-2xl overflow-hidden border border-stone-200/60 shadow-sm">
+          {/* Intestazione giorni */}
+          <div className={cols}>
+            <div className="bg-white py-2" />
+            {days.map(d => {
+              const k = dayKeyOf(d);
+              const isToday = k === today;
+              return (
+                <button key={k} onClick={() => onOpenDay(k)}
+                        className={`py-2 text-center hover:bg-stone-50 ${isToday ? 'bg-stone-900' : 'bg-white'}`}>
+                  <div className={`t-10 uppercase tracking-wider ${isToday ? 'text-white/70' : 'text-stone-400'}`}>{DOW_SHORT[(d.getDay() + 6) % 7]}</div>
+                  <div className={`t-13 font-semibold ${isToday ? 'text-white' : 'text-stone-900'}`}>{d.getDate()}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Riga ospiti */}
+          <div className={cols}>
+            <div className="bg-amber-50/70 px-2 py-2 flex items-center">
+              <div className="t-10 uppercase tracking-wider text-amber-700 font-semibold">Ospiti</div>
+            </div>
+            {days.map(d => {
+              const k = dayKeyOf(d);
+              const g = ((schedule[k] || {}).guests || '').trim();
+              return (
+                <button key={k} onClick={() => onOpenDay(k)} title={g}
+                        className="bg-amber-50/70 px-1 py-2 text-center hover:bg-amber-100/70 min-h-[36px] flex items-center justify-center">
+                  <span className="t-11 text-amber-900 font-medium truncate w-full">{g || '·'}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Una riga per dipendente */}
+          {employees.length === 0 ? (
+            <div className="bg-white p-6 text-center t-13 text-stone-400">Nessun dipendente configurato</div>
+          ) : employees.map(emp => (
+            <div key={emp.id} className={cols}>
+              <div className={`px-2 py-2 flex items-center ${emp.id === currentUserId ? 'bg-stone-100' : 'bg-white'}`}>
+                <div className="t-11 font-medium text-stone-700 truncate" title={emp.name}>{emp.name.split(' ')[0]}</div>
+              </div>
+              {days.map(d => {
+                const k = dayKeyOf(d);
+                const day = schedule[k];
+                const sh = shiftOf(day, emp.id);
+                const req = requestOf(day, emp.id);
+                const st = req ? statusStyle(req.status) : null;
+                const type = sh && sh.period ? SHIFT_BY_ID[sh.period] : null;
+                return (
+                  <button key={k} onClick={() => onOpenDay(k)}
+                          className="bg-white hover:bg-stone-50 py-2 px-0.5 min-h-[40px] flex flex-col items-center justify-center"
+                          style={st ? { background: st.bg, boxShadow: `inset 0 0 0 1px ${st.ring}` } : undefined}>
+                    {type ? (
+                      <span className="t-11 font-bold" style={{ color: type.color }}>{type.short}</span>
+                    ) : (
+                      <span className="t-11 text-stone-300">·</span>
+                    )}
+                    {sh && sh.time ? (
+                      <span className="text-[9px] leading-tight text-stone-500 truncate w-full text-center">{sh.time}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Griglia mensile: colpo d'occhio, tap per aprire il giorno
+    function MonthGrid({ days, month, today, schedule, currentUserId, isAdmin, onOpenDay }) {
+      return (
+        <div>
+          <div className="grid grid-cols-7 gap-1 mb-1">
+            {DOW_SHORT.map(d => (
+              <div key={d} className="t-10 uppercase tracking-wider text-stone-400 font-semibold text-center py-1">{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {days.map(d => {
+              const k = dayKeyOf(d);
+              const day = schedule[k];
+              const inMonth = d.getMonth() === month;
+              const isToday = k === today;
+              const sh = shiftOf(day, currentUserId);
+              const req = requestOf(day, currentUserId);
+              const st = req ? statusStyle(req.status) : null;
+              const type = sh && sh.period ? SHIFT_BY_ID[sh.period] : null;
+              const guests = ((day || {}).guests || '').trim();
+              const reqs = (day || {}).requests || {};
+              const pending = Object.keys(reqs).filter(id => reqs[id] && reqs[id].status === 'pending').length;
+
+              return (
+                <button key={k} onClick={() => onOpenDay(k)}
+                        className={`aspect-square rounded-xl border flex flex-col items-center justify-center gap-0.5 relative hover:bg-stone-50 ${inMonth ? 'bg-white border-stone-200/60' : 'bg-stone-50/50 border-transparent'}`}
+                        style={st ? { background: st.bg, borderColor: st.ring } : undefined}>
+                  <span className={`t-13 ${isToday ? 'font-bold text-white bg-stone-900 rounded-full w-6 h-6 flex items-center justify-center' : (inMonth ? 'text-stone-900' : 'text-stone-300')}`}>
+                    {d.getDate()}
+                  </span>
+                  {type && (
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: type.color }} />
+                  )}
+                  {guests && (
+                    <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />
+                  )}
+                  {isAdmin && pending > 0 && (
+                    <span className="absolute bottom-1 right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">{pending}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // Foglio del singolo giorno: ospiti, turni, richieste
+    function DaySheet({ dayKey, day, employees, user, isAdmin, onSetGuests, onSetShift, onRequest, onCancelRequest, onDecide, onClose }) {
+      const [guests, setGuests] = useState(day.guests || '');
+      const [showNote, setShowNote] = useState(false);
+      const [note, setNote] = useState('');
+      const guestsFocused = useRef(false);
+
+      useEffect(() => {
+        if (!guestsFocused.current) setGuests(day.guests || '');
+      }, [day.guests]);
+
+      const myReq = requestOf(day, user.id);
+
+      const commitGuests = () => {
+        guestsFocused.current = false;
+        if ((day.guests || '') === guests) return;
+        onSetGuests(dayKey, guests);
+      };
+
+      return (
+        <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-0 sm:p-6 animate-fade-in">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl animate-scale-in max-h-[92vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white/95 backdrop-blur-xl px-6 pt-6 pb-4 flex items-center justify-between border-b border-stone-100">
+              <div>
+                <div className="text-lg font-semibold tracking-tight capitalize">{formatDateLong(dayKey)}</div>
+                {dayKey === todayKey() && <div className="t-11 text-stone-400">Oggi</div>}
+              </div>
+              <button onClick={onClose} className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 hover:bg-stone-200"><Icon name="x" className="w-4 h-4" /></button>
+            </div>
+
+            <div className="px-6 py-5 space-y-6">
+              {/* ---- OSPITI ---- */}
+              <div>
+                <div className="t-11 uppercase tracking-widest text-stone-500 font-medium mb-1.5">Ospiti del giorno</div>
+                {isAdmin ? (
+                  <textarea
+                    value={guests}
+                    onChange={e => setGuests(e.target.value)}
+                    onFocus={() => { guestsFocused.current = true; }}
+                    onBlur={commitGuests}
+                    rows={2}
+                    placeholder="Es. 42 pax · gruppo Bianchi 8 · 2 allergie"
+                    className="w-full px-4 py-3 bg-amber-50 rounded-xl t-15 outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+                  />
+                ) : (
+                  <div className="px-4 py-3 bg-amber-50 rounded-xl t-15 text-amber-900 whitespace-pre-wrap break-words min-h-[48px]">
+                    {(day.guests || '').trim() || <span className="text-stone-400">Nessuna indicazione</span>}
+                  </div>
+                )}
+                {!isAdmin && <div className="t-11 text-stone-400 mt-1">Modificabile solo dall’admin</div>}
+              </div>
+
+              {/* ---- LA MIA DISPONIBILITA' ---- */}
+              <div>
+                <div className="t-11 uppercase tracking-widest text-stone-500 font-medium mb-1.5">La mia disponibilità</div>
+                {!myReq || myReq.status === 'rejected' ? (
+                  <div>
+                    {myReq && myReq.status === 'rejected' && (
+                      <div className="t-13 text-amber-800 bg-amber-50 rounded-xl px-4 py-2.5 mb-2">
+                        Richiesta rifiutata{myReq.decidedBy ? ` da ${myReq.decidedBy}` : ''}. Sei atteso in servizio.
+                      </div>
+                    )}
+                    {showNote ? (
+                      <div className="space-y-2">
+                        <input autoFocus value={note} onChange={e => setNote(e.target.value)}
+                               placeholder="Motivo (facoltativo)"
+                               className="w-full px-4 py-3 bg-stone-100 rounded-xl t-15 outline-none focus:ring-2 focus:ring-stone-900" />
+                        <div className="flex gap-2">
+                          <button onClick={() => { setShowNote(false); setNote(''); }}
+                                  className="flex-1 py-2.5 bg-stone-100 text-stone-700 rounded-xl text-sm font-medium hover:bg-stone-200">Annulla</button>
+                          <button onClick={async () => { await onRequest(dayKey, note); setShowNote(false); setNote(''); }}
+                                  className="flex-1 py-2.5 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600">Invia richiesta</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => setShowNote(true)}
+                              className="w-full py-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100 flex items-center justify-center gap-2">
+                        <Icon name="userx" className="w-4 h-4" /> Non sono disponibile
+                      </button>
+                    )}
+                  </div>
+                ) : myReq.status === 'pending' ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                    <div className="t-13 font-medium text-red-800">In attesa di approvazione</div>
+                    {myReq.note && <div className="t-11 text-red-700 mt-0.5">“{myReq.note}”</div>}
+                    <button onClick={() => onCancelRequest(dayKey)}
+                            className="mt-2 t-13 font-medium text-stone-600 underline">Ritira richiesta</button>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3">
+                    <div className="t-13 font-medium text-green-800 flex items-center gap-1.5">
+                      <Icon name="check" className="w-3.5 h-3.5" strokeWidth={3} /> Assenza approvata
+                      {myReq.decidedBy ? <span className="font-normal text-green-700">· {myReq.decidedBy}</span> : null}
+                    </div>
+                    <button onClick={() => onCancelRequest(dayKey)}
+                            className="mt-2 t-13 font-medium text-stone-600 underline">Annulla, sono disponibile</button>
+                  </div>
+                )}
+              </div>
+
+              {/* ---- TURNI ---- */}
+              <div>
+                <div className="t-11 uppercase tracking-widest text-stone-500 font-medium mb-1.5">
+                  Turni {isAdmin ? '' : '(assegnati dall’admin)'}
+                </div>
+                <div className="rounded-2xl border border-stone-200/60 overflow-hidden">
+                  {employees.length === 0 ? (
+                    <div className="p-5 text-center t-13 text-stone-400">Nessun dipendente configurato</div>
+                  ) : employees.map(emp => (
+                    <DayEmployeeRow
+                      key={emp.id}
+                      emp={emp}
+                      isMe={emp.id === user.id}
+                      isAdmin={isAdmin}
+                      shift={shiftOf(day, emp.id)}
+                      request={requestOf(day, emp.id)}
+                      onSetShift={(s) => onSetShift(dayKey, emp.id, s)}
+                      onDecide={(status) => onDecide(dayKey, emp.id, status)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 pb-6">
+              <button onClick={onClose} className="w-full py-3 bg-stone-100 text-stone-700 rounded-xl font-medium hover:bg-stone-200">Chiudi</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function DayEmployeeRow({ emp, isMe, isAdmin, shift, request, onSetShift, onDecide }) {
+      const [time, setTime] = useState((shift && shift.time) || '');
+      const timeFocused = useRef(false);
+
+      useEffect(() => {
+        if (!timeFocused.current) setTime((shift && shift.time) || '');
+      }, [shift && shift.time]);
+
+      const period = (shift && shift.period) || '';
+      const type = period ? SHIFT_BY_ID[period] : null;
+      const st = request ? statusStyle(request.status) : null;
+
+      const commitTime = () => {
+        timeFocused.current = false;
+        const v = time.trim();
+        if (((shift && shift.time) || '') === v) return;
+        onSetShift({ period, time: v });
+      };
+
+      return (
+        <div className="border-b border-stone-100 last:border-b-0 px-4 py-3" style={st ? { background: st.bg } : undefined}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="t-13 font-medium text-stone-900 flex-1 min-w-0 truncate">
+              {emp.name}{isMe ? <span className="t-11 text-stone-400 font-normal"> · tu</span> : null}
+            </div>
+            {request && request.status === 'pending' && (
+              <span className="t-10 uppercase tracking-wider font-semibold px-2 py-0.5 rounded-md bg-red-100 text-red-700">In attesa</span>
+            )}
+            {request && request.status === 'approved' && (
+              <span className="t-10 uppercase tracking-wider font-semibold px-2 py-0.5 rounded-md bg-green-100 text-green-700">Assente</span>
+            )}
+          </div>
+
+          {isAdmin ? (
+            <div className="flex gap-2 mt-2">
+              <select
+                value={period}
+                onChange={e => onSetShift(e.target.value ? { period: e.target.value, time: time.trim() } : null)}
+                className="flex-1 min-w-0 px-3 py-2 bg-white border border-stone-200 rounded-xl t-13 outline-none focus:ring-2 focus:ring-stone-900"
+              >
+                <option value="">— nessun turno —</option>
+                {SHIFT_TYPES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+              <input
+                value={time}
+                onChange={e => setTime(e.target.value)}
+                onFocus={() => { timeFocused.current = true; }}
+                onBlur={commitTime}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }}
+                placeholder="09:00-17:00"
+                className="w-[112px] px-3 py-2 bg-white border border-stone-200 rounded-xl t-13 outline-none focus:ring-2 focus:ring-stone-900 placeholder:text-stone-300"
+              />
+            </div>
+          ) : (
+            <div className="t-13 text-stone-600 mt-0.5 flex items-center gap-2">
+              {type ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-sm" style={{ background: type.color }} />
+                  <span className="font-medium" style={{ color: type.color }}>{type.label}</span>
+                </span>
+              ) : <span className="text-stone-300">Nessun turno</span>}
+              {shift && shift.time ? <span className="text-stone-500">{shift.time}</span> : null}
+            </div>
+          )}
+
+          {isAdmin && request && request.status === 'pending' && (
+            <div className="mt-2">
+              {request.note && <div className="t-11 text-stone-500 italic mb-1.5">“{request.note}”</div>}
+              <div className="flex gap-2">
+                <button onClick={() => onDecide('approved')}
+                        className="flex-1 py-2 bg-green-600 text-white rounded-xl t-13 font-medium hover:bg-green-700 flex items-center justify-center gap-1.5">
+                  <Icon name="check" className="w-3.5 h-3.5" strokeWidth={3} /> Approva
+                </button>
+                <button onClick={() => onDecide('rejected')}
+                        className="flex-1 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl t-13 font-medium hover:bg-stone-50">
+                  Rifiuta
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       );
     }

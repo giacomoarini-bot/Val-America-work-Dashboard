@@ -39,5 +39,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Calendario turni (un documento per giorno: ospiti, turni, richieste)
+    match /schedule/{day} {
+      allow read, write: if true;
+    }
+
   }
 }
