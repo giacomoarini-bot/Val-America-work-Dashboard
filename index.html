@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ciao Bella" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Ciao Bella Dashboard</title>
-  <meta name="app-version" content="v12-orario-in-griglia" />
+  <meta name="app-version" content="v12b-celle-a-capo" />
 
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.webmanifest" />
@@ -2680,7 +2680,7 @@
     // Tabellone settimanale: una riga per dipendente, una colonna per giorno.
     // Per l'admin le celle si scrivono direttamente, come in un foglio di calcolo.
     function WeekBoard({ days, today, employees, schedule, currentUserId, isAdmin, onOpenDay, onSetShift, onSetGuests }) {
-      const cols = 'grid grid-cols-[76px_repeat(7,minmax(0,1fr))] gap-px min-w-[620px]';
+      const cols = 'grid grid-cols-[76px_repeat(7,minmax(0,1fr))] gap-px min-w-[700px]';
 
       // Invio = scendi di una riga, Tab = vai al giorno dopo (comportamento nativo)
       const focusCell = (row, col) => {
@@ -2726,8 +2726,8 @@
                     <GuestCell key={k} dayKey={k} value={g} onSave={onSetGuests} />
                   ) : (
                     <button key={k} onClick={() => onOpenDay(k)} title={g}
-                            className="bg-amber-50 px-1 py-2 text-center hover:bg-amber-100 min-h-[36px] flex items-center justify-center">
-                      <span className="text-[11px] leading-tight text-amber-900 font-medium truncate w-full">{g.trim() || '·'}</span>
+                            className="bg-amber-50 px-1 py-2 text-center hover:bg-amber-100 min-h-[40px] flex items-center justify-center">
+                      <span className="text-[10px] leading-[1.35] text-amber-900 font-medium break-words w-full">{g.trim() || '·'}</span>
                     </button>
                   );
                 })}
@@ -2802,8 +2802,9 @@
       return (
         <div className="relative bg-white"
              style={st ? { background: st.bg, boxShadow: `inset 0 0 0 1px ${st.ring}` } : undefined}>
-          <input
+          <textarea
             data-cell={`${row}-${col}`}
+            rows={2}
             value={text}
             onChange={e => setText(e.target.value)}
             onFocus={e => { focused.current = true; if (e.target.select) e.target.select(); }}
@@ -2813,7 +2814,7 @@
               else if (e.key === 'Escape') { setText(shiftToText(shift)); e.target.blur(); }
             }}
             placeholder="·"
-            className="w-full bg-transparent outline-none text-center text-[11px] leading-tight py-3 px-1 focus:bg-stone-900/5 placeholder:text-stone-300"
+            className="w-full bg-transparent outline-none resize-none overflow-hidden text-center text-[10px] leading-[1.35] py-2.5 px-1 focus:bg-stone-900/5 placeholder:text-stone-300 break-words"
             style={type ? { color: type.color, fontWeight: 600 } : undefined}
           />
           {request && request.status === 'pending' && (
@@ -2837,7 +2838,7 @@
             <span className="text-[11px] text-stone-300">·</span>
           )}
           {shift && shift.time ? (
-            <span className="text-[9px] leading-tight text-stone-500 truncate w-full text-center">{shift.time}</span>
+            <span className="text-[9px] leading-[1.3] text-stone-500 w-full text-center break-words px-0.5">{shift.time}</span>
           ) : null}
         </button>
       );
@@ -2859,7 +2860,8 @@
       };
 
       return (
-        <input
+        <textarea
+          rows={2}
           value={text}
           title={text}
           onChange={e => setText(e.target.value)}
@@ -2867,7 +2869,7 @@
           onBlur={commit}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }}
           placeholder="·"
-          className="w-full bg-amber-50 outline-none text-center text-[11px] font-medium text-amber-900 py-2 px-1 focus:bg-amber-100 placeholder:text-amber-300"
+          className="w-full bg-amber-50 outline-none resize-none overflow-hidden text-center text-[10px] leading-[1.35] font-medium text-amber-900 py-2 px-1 focus:bg-amber-100 placeholder:text-amber-300 break-words"
         />
       );
     }
