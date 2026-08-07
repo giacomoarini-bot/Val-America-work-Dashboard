@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ciao Bella" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Ciao Bella Dashboard</title>
-  <meta name="app-version" content="v14-ordine-arrivo" />
+  <meta name="app-version" content="v15-scorri-una-settimana" />
 
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.webmanifest" />
@@ -2562,7 +2562,9 @@
       const monthDays = [];
       for (let i = 0; i < 42; i++) monthDays.push(addDays(gridStart, i));
 
-      const step = (n) => setAnchor(view === 'week' ? addDays(anchor, 14 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
+      // Si scorre di UNA settimana alla volta: la seconda diventa la prima,
+      // cosi' non si perde mai di vista la settimana appena guardata.
+      const step = (n) => setAnchor(view === 'week' ? addDays(anchor, 7 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
 
       const periodLabel = view === 'week'
         ? rangeLabel(fortnight)
