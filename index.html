@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ciao Bella" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Ciao Bella Dashboard</title>
-  <meta name="app-version" content="v13-due-settimane" />
+  <meta name="app-version" content="v14-ordine-arrivo" />
 
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.webmanifest" />
@@ -2670,7 +2670,7 @@
                     <span className="text-stone-600 font-medium"> M</span>/<span className="text-stone-600 font-medium">P</span>/<span className="text-stone-600 font-medium">S</span> solo la fascia ·
                     <span className="text-stone-600 font-medium"> S 17-chiusura</span> forza la fascia ·
                     <span className="text-stone-600 font-medium"> R</span> riposo · vuoto = nessun turno.
-                    <br />Invio scende di una riga, Tab passa al giorno dopo. Tocca l’intestazione del giorno per approvare le richieste.
+                    <br />Le persone sono in ordine di arrivo. Invio passa a quella dopo nello stesso giorno. Tocca l’intestazione del giorno per approvare le richieste.
                   </div>
                 )}
               </div>
@@ -2701,15 +2701,45 @@
       );
     }
 
-    // Tabellone settimanale: una riga per dipendente, una colonna per giorno.
-    // Per l'admin le celle si scrivono direttamente, come in un foglio di calcolo.
+    // Ordinamento per ora di ingresso: prima chi arriva, poi i riposi,
+    // infine chi non ha ancora un turno assegnato (visibile solo all'admin).
+    const startMinutes = (sh) => {
+      if (!sh || !sh.period) return 100000;
+      if (sh.period === 'riposo') return 90000;
+      const m = (sh.time || '').match(/(\d{1,2})(?::(\d{2}))?/);
+      if (m) {
+        const h = parseInt(m[1], 10);
+        const mm = m[2] ? parseInt(m[2], 10) : 0;
+        if (h >= 0 && h <= 23) return h * 60 + mm;
+      }
+      return sh.period === 'mattina' ? 480 : (sh.period === 'pomeriggio' ? 840 : 1140);
+    };
+
+    const sortedForDay = (employees, day, includeEmpty) => {
+      const list = employees.map(emp => ({
+        emp: emp,
+        shift: shiftOf(day, emp.id),
+        request: requestOf(day, emp.id)
+      }));
+      // Chi non ha turno resta nascosto ai dipendenti, ma se ha una richiesta
+      // di indisponibilita' deve comunque comparire, altrimenti sparisce il rosso.
+      const kept = includeEmpty ? list : list.filter(x => (x.shift && x.shift.period) || x.request);
+      return kept.sort((a, b) => {
+        const d = startMinutes(a.shift) - startMinutes(b.shift);
+        if (d !== 0) return d;
+        return a.emp.name.localeCompare(b.emp.name);
+      });
+    };
+
+    // Tabellone settimanale: una colonna per giorno, dentro le persone in ordine
+    // di arrivo. Per l'admin le celle si scrivono direttamente.
     function WeekBoard({ boardId, label, days, today, employees, schedule, currentUserId, isAdmin, onOpenDay, onSetShift, onSetGuests }) {
-      const cols = 'grid grid-cols-[76px_repeat(7,minmax(0,1fr))] gap-px min-w-[700px]';
+      const cols = 'grid grid-cols-7 gap-px min-w-[700px]';
       const hasToday = days.some(d => dayKeyOf(d) === today);
 
-      // Invio = scendi di una riga, Tab = vai al giorno dopo (comportamento nativo)
-      const focusCell = (row, col) => {
-        const el = document.querySelector(`[data-cell="${boardId}-${row}-${col}"]`);
+      // Invio = scendi alla persona successiva dello stesso giorno
+      const focusCell = (col, idx) => {
+        const el = document.querySelector(`[data-cell="${boardId}-${col}-${idx}"]`);
         if (el) { el.focus(); if (el.select) el.select(); }
       };
 
@@ -2722,11 +2752,10 @@
             </div>
           )}
           <div className="overflow-x-auto pb-1">
-            <div className="bg-stone-200/70 rounded-2xl overflow-hidden border border-stone-200/60 shadow-sm">
+            <div className="bg-stone-200/70 rounded-2xl overflow-hidden border border-stone-200/60 shadow-sm min-w-[700px]">
 
               {/* Intestazione giorni */}
               <div className={cols}>
-                <div className="bg-white py-2 sticky left-0 z-20" />
                 {days.map(d => {
                   const k = dayKeyOf(d);
                   const isToday = k === today;
@@ -2746,10 +2775,10 @@
               </div>
 
               {/* Riga ospiti */}
+              <div className="bg-amber-100/70 px-2 py-0.5">
+                <div className="t-10 uppercase tracking-wider text-amber-700 font-semibold">Ospiti del giorno</div>
+              </div>
               <div className={cols}>
-                <div className="bg-amber-50 px-2 py-2 flex items-center sticky left-0 z-20">
-                  <div className="t-10 uppercase tracking-wider text-amber-700 font-semibold">Ospiti</div>
-                </div>
                 {days.map(d => {
                   const k = dayKeyOf(d);
                   const g = ((schedule[k] || {}).guests || '');
@@ -2764,42 +2793,52 @@
                 })}
               </div>
 
-              {/* Una riga per dipendente */}
-              {employees.length === 0 ? (
-                <div className="bg-white p-6 text-center t-13 text-stone-400">Nessun dipendente configurato</div>
-              ) : employees.map((emp, ri) => (
-                <div key={emp.id} className={cols}>
-                  <div className={`px-2 py-2 flex items-center sticky left-0 z-20 ${emp.id === currentUserId ? 'bg-stone-100' : 'bg-white'}`}>
-                    <div className="t-11 font-medium text-stone-700 truncate" title={emp.name}>{emp.name.split(' ')[0]}</div>
-                  </div>
-                  {days.map((d, ci) => {
-                    const k = dayKeyOf(d);
-                    const day = schedule[k];
-                    const sh = shiftOf(day, emp.id);
-                    const req = requestOf(day, emp.id);
-                    return isAdmin ? (
-                      <ShiftCell
-                        key={k}
-                        shift={sh}
-                        request={req}
-                        cellId={`${boardId}-${ri}-${ci}`}
-                        onSave={(next) => onSetShift(k, emp.id, next)}
-                        onEnter={() => focusCell(ri + 1, ci)}
-                      />
-                    ) : (
-                      <ShiftCellReadOnly key={k} shift={sh} request={req} onClick={() => onOpenDay(k)} />
-                    );
-                  })}
-                </div>
-              ))}
+              {/* Una colonna per giorno, le persone in ordine di arrivo */}
+              <div className={cols}>
+                {days.map((d, ci) => {
+                  const k = dayKeyOf(d);
+                  const day = schedule[k];
+                  const rows = sortedForDay(employees, day, isAdmin);
+                  return (
+                    <div key={k} className="bg-white flex flex-col">
+                      {rows.length === 0 ? (
+                        <button onClick={() => onOpenDay(k)}
+                                className="py-5 t-11 text-stone-300 hover:bg-stone-50 w-full">·</button>
+                      ) : rows.map((row, ri) => (
+                        isAdmin ? (
+                          <ShiftCell
+                            key={row.emp.id}
+                            name={row.emp.name}
+                            isMe={row.emp.id === currentUserId}
+                            shift={row.shift}
+                            request={row.request}
+                            cellId={`${boardId}-${ci}-${ri}`}
+                            onSave={(next) => onSetShift(k, row.emp.id, next)}
+                            onEnter={() => focusCell(ci, ri + 1)}
+                          />
+                        ) : (
+                          <ShiftCellReadOnly
+                            key={row.emp.id}
+                            name={row.emp.name}
+                            isMe={row.emp.id === currentUserId}
+                            shift={row.shift}
+                            request={row.request}
+                            onClick={() => onOpenDay(k)}
+                          />
+                        )
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
       );
     }
 
-    // Cella turno editabile (admin)
-    function ShiftCell({ shift, request, cellId, onSave, onEnter }) {
+    // Cella turno editabile (admin): nome + orario
+    function ShiftCell({ name, isMe, shift, request, cellId, onSave, onEnter }) {
       const [text, setText] = useState(() => shiftToText(shift));
       const focused = useRef(false);
 
@@ -2820,11 +2859,14 @@
       };
 
       return (
-        <div className="relative bg-white"
+        <div className="relative bg-white border-b border-stone-100 last:border-b-0 px-1 pt-1"
              style={st ? { background: st.bg, boxShadow: `inset 0 0 0 1px ${st.ring}` } : undefined}>
+          <div className={`text-[9px] leading-none truncate px-1 ${isMe ? 'text-stone-700 font-bold' : 'text-stone-400 font-medium'}`} title={name}>
+            {name.split(' ')[0]}
+          </div>
           <textarea
             data-cell={cellId}
-            rows={2}
+            rows={text.length > 13 ? 2 : 1}
             value={text}
             onChange={e => setText(e.target.value)}
             onFocus={e => { focused.current = true; if (e.target.select) e.target.select(); }}
@@ -2834,7 +2876,7 @@
               else if (e.key === 'Escape') { setText(shiftToText(shift)); e.target.blur(); }
             }}
             placeholder="·"
-            className="w-full bg-transparent outline-none resize-none overflow-hidden text-center text-[10px] leading-[1.35] py-2.5 px-1 focus:bg-stone-900/5 placeholder:text-stone-300 break-words"
+            className="w-full bg-transparent outline-none resize-none overflow-hidden text-center text-[10px] leading-[1.35] pb-1.5 pt-0.5 px-1 focus:bg-stone-900/5 placeholder:text-stone-300 break-words"
             style={type ? { color: type.color, fontWeight: 600 } : undefined}
           />
           {request && request.status === 'pending' && (
@@ -2844,25 +2886,25 @@
       );
     }
 
-    // Cella turno in sola lettura (dipendente)
-    function ShiftCellReadOnly({ shift, request, onClick }) {
+    // Cella turno in sola lettura (dipendente): nome + orario
+    function ShiftCellReadOnly({ name, isMe, shift, request, onClick }) {
       const st = request ? statusStyle(request.status) : null;
       const type = shift && shift.period ? SHIFT_BY_ID[shift.period] : null;
       return (
         <button onClick={onClick}
-                className="bg-white hover:bg-stone-50 py-2 px-0.5 min-h-[42px] flex flex-col items-center justify-center"
+                className="bg-white hover:bg-stone-50 border-b border-stone-100 last:border-b-0 py-1.5 px-1 w-full text-center"
                 style={st ? { background: st.bg, boxShadow: `inset 0 0 0 1px ${st.ring}` } : undefined}>
-          {type ? (
-            <span className="text-[11px] font-bold" style={{ color: type.color }}>{type.short}</span>
-          ) : (
-            <span className="text-[11px] text-stone-300">·</span>
-          )}
-          {shift && shift.time ? (
-            <span className="text-[9px] leading-[1.3] text-stone-500 w-full text-center break-words px-0.5">{shift.time}</span>
-          ) : null}
+          <div className={`text-[9px] leading-none truncate ${isMe ? 'text-stone-700 font-bold' : 'text-stone-400 font-medium'}`} title={name}>
+            {name.split(' ')[0]}
+          </div>
+          <div className="text-[10px] leading-[1.35] break-words mt-0.5"
+               style={type ? { color: type.color, fontWeight: 600 } : { color: '#d6d3d1' }}>
+            {shift && shift.period === 'riposo' ? 'R' : ((shift && shift.time) || (type ? type.short : '·'))}
+          </div>
         </button>
       );
     }
+
 
     // Cella ospiti editabile (admin)
     function GuestCell({ dayKey, value, onSave }) {
@@ -3050,16 +3092,16 @@
                 <div className="rounded-2xl border border-stone-200/60 overflow-hidden">
                   {employees.length === 0 ? (
                     <div className="p-5 text-center t-13 text-stone-400">Nessun dipendente configurato</div>
-                  ) : employees.map(emp => (
+                  ) : sortedForDay(employees, day, true).map(row => (
                     <DayEmployeeRow
-                      key={emp.id}
-                      emp={emp}
-                      isMe={emp.id === user.id}
+                      key={row.emp.id}
+                      emp={row.emp}
+                      isMe={row.emp.id === user.id}
                       isAdmin={isAdmin}
-                      shift={shiftOf(day, emp.id)}
-                      request={requestOf(day, emp.id)}
-                      onSetShift={(s) => onSetShift(dayKey, emp.id, s)}
-                      onDecide={(status) => onDecide(dayKey, emp.id, status)}
+                      shift={row.shift}
+                      request={row.request}
+                      onSetShift={(s) => onSetShift(dayKey, row.emp.id, s)}
+                      onDecide={(status) => onDecide(dayKey, row.emp.id, status)}
                     />
                   ))}
                 </div>
