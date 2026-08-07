@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ciao Bella" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Ciao Bella Dashboard</title>
-  <meta name="app-version" content="v12b-celle-a-capo" />
+  <meta name="app-version" content="v13-due-settimane" />
 
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.webmanifest" />
@@ -2469,6 +2469,14 @@
       return addDays(x, -((x.getDay() + 6) % 7));
     };
 
+    // "3 – 9 agosto" oppure "28 luglio – 3 agosto"
+    const rangeLabel = (ds) => {
+      const a = ds[0], b = ds[ds.length - 1];
+      const sameMonth = a.getMonth() === b.getMonth();
+      const fmt = (d, withMonth) => d.getDate() + (withMonth ? ' ' + d.toLocaleDateString('it-IT', { month: 'long' }) : '');
+      return `${fmt(a, !sameMonth)} – ${fmt(b, true)}`;
+    };
+
     // Interpreta quello che l'admin scrive nella cella, come in un foglio Excel.
     //   "6:30-14"        -> Mattina, orario 6:30-14
     //   "17-chiusura"    -> Pomeriggio (dall'ora di inizio)
@@ -2541,9 +2549,12 @@
 
       const today = todayKey();
 
+      // La vista "settimana" mostra due settimane: quella corrente e la successiva
       const weekStart = startOfWeek(anchor);
-      const weekDays = [];
-      for (let i = 0; i < 7; i++) weekDays.push(addDays(weekStart, i));
+      const fortnight = [];
+      for (let i = 0; i < 14; i++) fortnight.push(addDays(weekStart, i));
+      const weekDays = fortnight.slice(0, 7);
+      const weekDays2 = fortnight.slice(7);
 
       // Griglia del mese: sempre 6 righe da lunedi a domenica
       const monthFirst = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
@@ -2551,15 +2562,10 @@
       const monthDays = [];
       for (let i = 0; i < 42; i++) monthDays.push(addDays(gridStart, i));
 
-      const step = (n) => setAnchor(view === 'week' ? addDays(anchor, 7 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
+      const step = (n) => setAnchor(view === 'week' ? addDays(anchor, 14 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
 
       const periodLabel = view === 'week'
-        ? (() => {
-            const a = weekDays[0], b = weekDays[6];
-            const sameMonth = a.getMonth() === b.getMonth();
-            const fmt = (d, withMonth) => d.getDate() + (withMonth ? ' ' + d.toLocaleDateString('it-IT', { month: 'long' }) : '');
-            return `${fmt(a, !sameMonth)} – ${fmt(b, true)}`;
-          })()
+        ? rangeLabel(fortnight)
         : anchor.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
 
       // Banner: richieste rifiutate negli ultimi 7 giorni
@@ -2591,7 +2597,7 @@
               <div className="flex bg-stone-100 rounded-full p-0.5">
                 <button onClick={() => setView('week')}
                         className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${view === 'week' ? 'bg-stone-900 text-white' : 'text-stone-600'}`}>
-                  Settimana
+                  2 settimane
                 </button>
                 <button onClick={() => setView('month')}
                         className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${view === 'month' ? 'bg-stone-900 text-white' : 'text-stone-600'}`}>
@@ -2645,11 +2651,29 @@
             </div>
 
             {view === 'week' ? (
-              <WeekBoard
-                days={weekDays} today={today} employees={employees} schedule={schedule}
-                currentUserId={user.id} isAdmin={isAdmin} onOpenDay={setOpenDay}
-                onSetShift={onSetShift} onSetGuests={onSetGuests}
-              />
+              <div className="space-y-5">
+                <WeekBoard
+                  boardId="a" label={rangeLabel(weekDays)}
+                  days={weekDays} today={today} employees={employees} schedule={schedule}
+                  currentUserId={user.id} isAdmin={isAdmin} onOpenDay={setOpenDay}
+                  onSetShift={onSetShift} onSetGuests={onSetGuests}
+                />
+                <WeekBoard
+                  boardId="b" label={rangeLabel(weekDays2)}
+                  days={weekDays2} today={today} employees={employees} schedule={schedule}
+                  currentUserId={user.id} isAdmin={isAdmin} onOpenDay={setOpenDay}
+                  onSetShift={onSetShift} onSetGuests={onSetGuests}
+                />
+                {isAdmin && (
+                  <div className="t-11 text-stone-400 leading-relaxed">
+                    Scrivi direttamente nelle celle. <span className="text-stone-600 font-medium">6:30-14</span> deduce la fascia dall’ora ·
+                    <span className="text-stone-600 font-medium"> M</span>/<span className="text-stone-600 font-medium">P</span>/<span className="text-stone-600 font-medium">S</span> solo la fascia ·
+                    <span className="text-stone-600 font-medium"> S 17-chiusura</span> forza la fascia ·
+                    <span className="text-stone-600 font-medium"> R</span> riposo · vuoto = nessun turno.
+                    <br />Invio scende di una riga, Tab passa al giorno dopo. Tocca l’intestazione del giorno per approvare le richieste.
+                  </div>
+                )}
+              </div>
             ) : (
               <MonthGrid
                 days={monthDays} month={anchor.getMonth()} today={today} schedule={schedule}
@@ -2679,17 +2703,24 @@
 
     // Tabellone settimanale: una riga per dipendente, una colonna per giorno.
     // Per l'admin le celle si scrivono direttamente, come in un foglio di calcolo.
-    function WeekBoard({ days, today, employees, schedule, currentUserId, isAdmin, onOpenDay, onSetShift, onSetGuests }) {
+    function WeekBoard({ boardId, label, days, today, employees, schedule, currentUserId, isAdmin, onOpenDay, onSetShift, onSetGuests }) {
       const cols = 'grid grid-cols-[76px_repeat(7,minmax(0,1fr))] gap-px min-w-[700px]';
+      const hasToday = days.some(d => dayKeyOf(d) === today);
 
       // Invio = scendi di una riga, Tab = vai al giorno dopo (comportamento nativo)
       const focusCell = (row, col) => {
-        const el = document.querySelector(`[data-cell="${row}-${col}"]`);
+        const el = document.querySelector(`[data-cell="${boardId}-${row}-${col}"]`);
         if (el) { el.focus(); if (el.select) el.select(); }
       };
 
       return (
         <div>
+          {label && (
+            <div className="flex items-baseline gap-2 mb-1.5">
+              <div className="t-13 font-semibold text-stone-700 capitalize">{label}</div>
+              {hasToday && <div className="t-10 uppercase tracking-wider font-semibold text-stone-400">questa settimana</div>}
+            </div>
+          )}
           <div className="overflow-x-auto pb-1">
             <div className="bg-stone-200/70 rounded-2xl overflow-hidden border border-stone-200/60 shadow-sm">
 
@@ -2751,8 +2782,7 @@
                         key={k}
                         shift={sh}
                         request={req}
-                        row={ri}
-                        col={ci}
+                        cellId={`${boardId}-${ri}-${ci}`}
                         onSave={(next) => onSetShift(k, emp.id, next)}
                         onEnter={() => focusCell(ri + 1, ci)}
                       />
@@ -2764,22 +2794,12 @@
               ))}
             </div>
           </div>
-
-          {isAdmin && (
-            <div className="t-11 text-stone-400 mt-2 leading-relaxed">
-              Scrivi direttamente nelle celle. <span className="text-stone-600 font-medium">6:30-14</span> deduce la fascia dall’ora ·
-              <span className="text-stone-600 font-medium"> M</span>/<span className="text-stone-600 font-medium">P</span>/<span className="text-stone-600 font-medium">S</span> solo la fascia ·
-              <span className="text-stone-600 font-medium"> S 17-chiusura</span> forza la fascia ·
-              <span className="text-stone-600 font-medium"> R</span> riposo · vuoto = nessun turno.
-              <br />Invio scende di una riga, Tab passa al giorno dopo. Tocca l’intestazione del giorno per approvare le richieste.
-            </div>
-          )}
         </div>
       );
     }
 
     // Cella turno editabile (admin)
-    function ShiftCell({ shift, request, row, col, onSave, onEnter }) {
+    function ShiftCell({ shift, request, cellId, onSave, onEnter }) {
       const [text, setText] = useState(() => shiftToText(shift));
       const focused = useRef(false);
 
@@ -2803,7 +2823,7 @@
         <div className="relative bg-white"
              style={st ? { background: st.bg, boxShadow: `inset 0 0 0 1px ${st.ring}` } : undefined}>
           <textarea
-            data-cell={`${row}-${col}`}
+            data-cell={cellId}
             rows={2}
             value={text}
             onChange={e => setText(e.target.value)}
